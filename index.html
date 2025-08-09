@@ -1,0 +1,628 @@
+﻿<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no"/>
+<title>魔塔（10层，触屏版）— 作者：LSH</title>
+<style>
+  :root{
+    --tile:36px;        /* 单格像素 */
+    --grid:13;          /* 13x13 */
+    --ui-bg:#10141a;
+    --ui-fg:#eef3ff;
+    --ui-ac:#5dd6ff;
+    --btn:#1d2633;
+    --btn-press:#2b3a52;
+  }
+  *{box-sizing:border-box; -webkit-tap-highlight-color:transparent;}
+  body{
+    margin:0; background:#0c0f14; color:var(--ui-fg);
+    font:14px/1.4 system-ui, -apple-system, "Segoe UI", Roboto, "PingFang SC", "Microsoft YaHei", Arial, sans-serif;
+    display:flex; flex-direction:column; align-items:center; gap:10px; padding:10px;
+    user-select:none;
+  }
+  .wrap{display:flex; flex-direction:column; gap:8px; width:min(100vw, 600px);}
+  .header{
+    display:flex; align-items:center; justify-content:space-between; gap:8px;
+    background:var(--ui-bg); border-radius:12px; padding:10px 12px; box-shadow:0 6px 20px rgba(0,0,0,.35);
+  }
+  .title{font-weight:700; letter-spacing:.5px}
+  .stats{display:flex; gap:10px; flex-wrap:wrap; font-size:12px; opacity:.95}
+  .tag{padding:2px 8px; border-radius:999px; background:#16202b; border:1px solid #223146}
+  .screen{
+    background:linear-gradient(#11161e,#0e141c); border:1px solid #1f2a3a; border-radius:14px;
+    width:calc(var(--tile) * var(--grid)); height:calc(var(--tile) * var(--grid));
+    margin:0 auto; position:relative; overflow:hidden; box-shadow:0 8px 30px rgba(0,0,0,.45);
+  }
+  canvas{display:block; width:100%; height:100%;}
+  .row{display:flex; gap:8px; flex-wrap:wrap}
+  .controls{
+    display:grid; grid-template-columns:repeat(3,1fr); gap:8px; margin:0 auto; width:calc(var(--tile) * var(--grid));
+  }
+  .btn{
+    background:var(--btn); color:var(--ui-fg); border:1px solid #2d3c55;
+    border-radius:12px; padding:12px; text-align:center; font-weight:600; cursor:pointer;
+    touch-action:manipulation; user-select:none;
+  }
+  .btn:active{background:var(--btn-press)}
+  .btn span{display:block; opacity:.9; font-size:12px; font-weight:500}
+  .wide{grid-column:1/4}
+  .bar{
+    display:flex; gap:8px; justify-content:space-between; align-items:center; flex-wrap:wrap
+  }
+  .bar .btn{flex:1}
+  .log{
+    background:#0e141c; border:1px solid #1c2536; border-radius:10px; padding:8px 10px; min-height:36px;
+    color:#bcd1ff; font-size:12px; opacity:.95
+  }
+  .legend{
+    display:flex; flex-wrap:wrap; gap:8px; font-size:12px; opacity:.9
+  }
+  .cell{display:inline-flex; align-items:center; gap:6px; padding:4px 8px; background:#0f1620; border:1px solid #1d293b; border-radius:999px}
+  .swatch{width:14px; height:14px; border-radius:3px; border:1px solid #0006}
+  .footer{opacity:.65; font-size:12px; text-align:center}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="header">
+    <div class="title">魔塔 · 10F 触屏版（作者：LSH）</div>
+    <div class="stats" id="stats"></div>
+  </div>
+
+  <div class="screen"><canvas id="game" width="468" height="468"></canvas></div>
+
+  <div class="row bar">
+    <div class="btn" id="btnUp">↑<span>上</span></div>
+    <div class="btn" id="btnAct">◎<span>确认/交互</span></div>
+    <div class="btn" id="btnDown">↓<span>下</span></div>
+  </div>
+  <div class="controls">
+    <div class="btn" id="btnLeft">←<span>左</span></div>
+    <div class="btn wide" id="btnCenter">•<span>待机/取消</span></div>
+    <div class="btn" id="btnRight">→<span>右</span></div>
+  </div>
+
+  <div class="row bar">
+    <div class="btn" id="btnSave">存档</div>
+    <div class="btn" id="btnLoad">读档</div>
+    <div class="btn" id="btnMusic">音乐：关</div>
+  </div>
+
+  <div class="log" id="log">欢迎来到魔塔！触摸方向键进行移动，走到怪物上自动战斗，靠近门或商人点“确认”。</div>
+
+  <div class="legend">
+    <div class="cell"><span class="swatch" style="background:#6c8dad"></span>蓝门/钥匙</div>
+    <div class="cell"><span class="swatch" style="background:#d6b24a"></span>黄门/钥匙</div>
+    <div class="cell"><span class="swatch" style="background:#a64ec8"></span>紫门/钥匙</div>
+    <div class="cell"><span class="swatch" style="background:#d14a4a"></span>怪物</div>
+    <div class="cell"><span class="swatch" style="background:#60d66a"></span>道具瓶</div>
+    <div class="cell"><span class="swatch" style="background:#ffffff"></span>楼梯</div>
+  </div>
+
+  <div class="footer">提示：若卡关可多攒钥匙与属性；支持本地存档。</div>
+</div>
+
+<script>
+/* =======================
+   魔塔（10层触屏版）
+   作者：LSH
+   说明：单文件，Canvas 渲染，触摸+键盘
+   ======================= */
+
+(function(){
+  // 基础常量
+  const GRID = 13;
+  const TILE = 36;            // 每格像素（与 CSS 同步）
+  const W = GRID, H = GRID;
+
+  // 画布
+  const cvs = document.getElementById('game');
+  const ctx = cvs.getContext('2d');
+  const statsEl = document.getElementById('stats');
+  const logEl = document.getElementById('log');
+
+  // UI按钮
+  const $ = id => document.getElementById(id);
+  const btns = {
+    up: $('btnUp'), down: $('btnDown'), left: $('btnLeft'), right: $('btnRight'),
+    act: $('btnAct'), center: $('btnCenter'),
+    save: $('btnSave'), load: $('btnLoad'), music: $('btnMusic')
+  };
+
+  // 简易音乐(无外链)：用 WebAudio 合成提示音
+  const audio = {
+    ctx: null, on:false,
+    beep(freq=660, ms=100, type='sine', vol=.05){
+      if(!this.on){return}
+      if(!this.ctx){this.ctx = new (window.AudioContext||window.webkitAudioContext)()}
+      const t = this.ctx.currentTime;
+      const osc = this.ctx.createOscillator();
+      const gain = this.ctx.createGain();
+      osc.type = type; osc.frequency.value = freq;
+      gain.gain.setValueAtTime(0, t);
+      gain.gain.linearRampToValueAtTime(vol, t+0.01);
+      gain.gain.exponentialRampToValueAtTime(0.0001, t + ms/1000);
+      osc.connect(gain).connect(this.ctx.destination);
+      osc.start(t); osc.stop(t + ms/1000 + 0.05);
+    }
+  };
+
+  // 地图元素枚举
+  const T = {
+    EMPTY:0, WALL:1,
+    DOOR_Y:2, DOOR_B:3, DOOR_P:4,
+    KEY_Y:5, KEY_B:6, KEY_P:7,
+    UP:8, DOWN:9,
+    POT_HP:10, POT_ATK:11, POT_DEF:12, COIN:13,
+    MON_1:20, MON_2:21, MON_3:22, MON_4:23, MON_5:24,
+    MERCHANT:30
+  };
+
+  // 怪物表（固定伤害公式：我方先攻=否 -> 常规魔塔：先算伤害）
+  const MONS = {
+    [T.MON_1]: {name:'史莱姆', hp:35, atk:18, def:5, gold:1, exp:1},
+    [T.MON_2]: {name:'小蝙蝠', hp:60, atk:22, def:8, gold:2, exp:2},
+    [T.MON_3]: {name:'骷髅兵', hp:120, atk:45, def:18, gold:6, exp:6},
+    [T.MON_4]: {name:'骑士', hp:250, atk:80, def:40, gold:15, exp:15},
+    [T.MON_5]: {name:'魔族守卫', hp:420, atk:120, def:65, gold:30, exp:30},
+  };
+
+  // 玩家
+  const player = {
+    x:1, y:11, f:0,
+    hp:300, atk:30, def:15, gold:0, exp:0, level:1,
+    keys:{Y:1,B:0,P:0}
+  };
+
+  // 经验升级（简化）
+  function tryLevelUp(){
+    const need = player.level*10;
+    while(player.exp>=need){
+      player.exp -= need;
+      player.level++;
+      player.hp += 60;
+      player.atk += 8;
+      player.def += 6;
+      log(`升级到 Lv${player.level}！属性提升。`);
+      audio.beep(880,120,'triangle',.06);
+    }
+  }
+
+  // 商人脚本
+  function merchantDialog(){
+    const opts = [
+      {txt:'花 10 金：+80HP', act:()=>{ if(pay(10)){ player.hp+=80; ok('体力+80'); } } },
+      {txt:'花 10 金：+6ATK', act:()=>{ if(pay(10)){ player.atk+=6; ok('攻击+6'); } } },
+      {txt:'花 10 金：+5DEF', act:()=>{ if(pay(10)){ player.def+=5; ok('防御+5'); } } },
+      {txt:'花 8 金：黄钥匙+1', act:()=>{ if(pay(8)){ player.keys.Y++; ok('黄钥匙+1'); } } },
+      {txt:'关闭', act:()=>{ ok('再见，勇士。'); } },
+    ];
+    const line = opts.map((o,i)=>`[${i+1}]${o.txt}`).join('  ');
+    log(`商人：需要点什么？ ${line}（点击确认键循环选项，站位不动表示关闭）`);
+    // 简易循环菜单（按确认键会轮询执行下一项）
+    merchantDialog._i = ((merchantDialog._i||0)+1) % opts.length;
+    opts[merchantDialog._i].act();
+  }
+  function pay(n){ if(player.gold<n){ warn('金币不足'); return false } player.gold-=n; audio.beep(520,80,'sine',.05); return true }
+  function ok(m){ log(m); audio.beep(760,80,'sine',.05) }
+  function warn(m){ log(m); audio.beep(260,120,'square',.07) }
+
+  // 地图：10层，每层13x13
+  // 说明：为保证“不会黑屏”，首层含清晰可见元素；每层至少有上下楼连接（第0层没有上楼，第9层没有下楼）
+  // 1=墙，2/3/4=门(黄/蓝/紫)，5/6/7=钥匙(黄/蓝/紫)
+  // 10/11/12=药/攻/防，13=金币，20~24=怪，30=商人
+  const F = []; // floors
+
+  function fillBorderWalls(m){
+    for(let y=0;y<H;y++){
+      for(let x=0;x<W;x++){
+        if(x===0||y===0||x===W-1||y===H-1) m[y][x]=T.WALL;
+      }
+    }
+  }
+
+  function makeEmpty(){
+    const m = Array.from({length:H},()=>Array.from({length:W},()=>T.EMPTY));
+    fillBorderWalls(m);
+    return m;
+  }
+
+  // 预置 10 层
+  // F0：新手层
+  (function(){
+    const m = makeEmpty();
+    // 起点
+    player.x=1; player.y=11; player.f=0;
+    // 道具与门
+    m[11][1]=T.EMPTY;
+    m[11][2]=T.KEY_Y; m[10][2]=T.COIN; m[9][2]=T.POT_HP;
+    m[11][3]=T.DOOR_Y; m[11][4]=T.MON_1; m[10][4]=T.KEY_B;
+    m[9][4]=T.DOOR_B; m[8][4]=T.MON_1; m[7][4]=T.MON_2;
+    m[6][4]=T.POT_ATK; m[5][4]=T.POT_DEF;
+    m[4][4]=T.MERCHANT;
+    // 楼梯
+    m[2][6]=T.DOWN; // 为了演示，0层只有下楼（到1层）
+    F.push(m);
+  })();
+
+  // F1~F8：常规
+  for(let f=1; f<9; f++){
+    const m = makeEmpty();
+    // 迷宫墙
+    for(let x=2;x<11;x++){
+      if(x%2===0){ for(let y=2;y<11;y++){ if(y%3===0) continue; m[y][x]=T.WALL; } }
+    }
+    // 门钥匙/怪物
+    m[3][3]=T.DOOR_Y; m[3][2]=T.KEY_Y;
+    m[5][5]=T.DOOR_B; m[4][5]=T.KEY_B;
+    m[7][7]=T.DOOR_P; m[6][7]=T.KEY_P;
+
+    // 随机撒点怪/钱/药
+    const rand = (a,b)=>Math.floor(Math.random()*(b-a+1))+a;
+    let placed=0;
+    while(placed<22){
+      const x=rand(1,11), y=rand(1,11);
+      if(m[y][x]!==T.EMPTY) continue;
+      const roll = rand(1,100);
+      let t=T.EMPTY;
+      if(roll<40) t=[T.MON_1,T.MON_2,T.MON_3, T.MON_4][rand(0,3)];
+      else if(roll<65) t=[T.POT_HP,T.POT_ATK,T.POT_DEF][rand(0,2)];
+      else t=T.COIN;
+      m[y][x]=t; placed++;
+    }
+
+    // 商人 & 楼梯
+    m[2][2]=T.MERCHANT;
+    m[2][10]=T.UP;
+    m[10][10]=T.DOWN;
+    F.push(m);
+  }
+
+  // F9：终层（BOSS）
+  (function(){
+    const m = makeEmpty();
+    // 中央大厅
+    for(let y=2;y<11;y++){
+      for(let x=2;x<11;x++){
+        if((x===2||x===10||y===2||y===10) && !((x===6||y===6))) m[y][x]=T.WALL;
+      }
+    }
+    // 终层配置
+    m[3][6]=T.MON_5; m[5][6]=T.MON_5; m[7][6]=T.MON_5; m[6][5]=T.MON_4; m[6][7]=T.MON_4;
+    m[6][6]=T.MON_5;
+    m[10][6]=T.UP;   // 从9层上来
+    // 没有下楼（终点）
+    F.push(m);
+  })();
+
+  // 连接关系：0 的 DOWN -> 1；1 的 UP -> 0；1 的 DOWN -> 2 ... 8 的 DOWN -> 9
+  function findStair(f, type){
+    const m = F[f];
+    for(let y=0;y<H;y++) for(let x=0;x<W;x++) if(m[y][x]===type) return {x,y};
+    return null;
+  }
+
+  // 渲染
+  function draw(){
+    // 背景网格
+    ctx.fillStyle = '#0b1220';
+    ctx.fillRect(0,0,cvs.width,cvs.height);
+    // 棋盘浅色
+    for(let y=0;y<H;y++){
+      for(let x=0;x<W;x++){
+        ctx.fillStyle = ((x+y)&1)?'#0e1626':'#0f1a2e';
+        ctx.fillRect(x*TILE, y*TILE, TILE, TILE);
+      }
+    }
+
+    // 绘制当前层
+    const m = F[player.f];
+    for(let y=0;y<H;y++){
+      for(let x=0;x<W;x++){
+        const v = m[y][x];
+        if(v===T.EMPTY) continue;
+        drawTile(x,y,v);
+      }
+    }
+
+    // 绘制玩家
+    drawPlayer();
+  }
+
+  function drawTile(x,y,t){
+    const px=x*TILE, py=y*TILE, s=TILE;
+
+    // 通用方块底
+    function box(color, edge='#0008'){
+      ctx.fillStyle=color; ctx.fillRect(px+2,py+2,s-4,s-4);
+      ctx.strokeStyle=edge; ctx.lineWidth=2; ctx.strokeRect(px+2,py+2,s-4,s-4);
+    }
+
+    switch(t){
+      case T.WALL: box('#1c2b42','#000'); break;
+      case T.DOOR_Y: box('#d6b24a'); glyph('门', px,py); break;
+      case T.DOOR_B: box('#6c8dad'); glyph('门', px,py); break;
+      case T.DOOR_P: box('#a64ec8'); glyph('门', px,py); break;
+      case T.KEY_Y: box('#8a741e'); dot('#ffd34a'); break;
+      case T.KEY_B: box('#2b506d'); dot('#a3d3ff'); break;
+      case T.KEY_P: box('#4a2b6d'); dot('#d6a3ff'); break;
+      case T.UP:    box('#ffffff','#223'); glyph('上', px,py,'#000'); break;
+      case T.DOWN:  box('#ffffff','#223'); glyph('下', px,py,'#000'); break;
+      case T.POT_HP: box('#113c2b'); dot('#60d66a'); break;
+      case T.POT_ATK: box('#3c1111'); dot('#ff6a6a'); break;
+      case T.POT_DEF: box('#11263c'); dot('#6ab0ff'); break;
+      case T.COIN: box('#392b0b'); coin(); break;
+      case T.MERCHANT: box('#203015'); glyph('商', px,py,'#ffdca8'); break;
+      default:
+        if(t>=20 && t<=24){ box('#3a1318'); monsterFace(); }
+        else box('#222');
+    }
+
+    function glyph(txt, x,y, color='#e6f1ff'){
+      ctx.fillStyle=color;
+      ctx.font = 'bold 16px system-ui, sans-serif';
+      ctx.textAlign='center'; ctx.textBaseline='middle';
+      ctx.fillText(txt, x+TILE/2, y+TILE/2+1);
+    }
+    function dot(c){
+      ctx.fillStyle=c; ctx.beginPath();
+      ctx.arc(px+s/2, py+s/2, s*0.18, 0, Math.PI*2); ctx.fill();
+    }
+    function coin(){
+      ctx.fillStyle='#e6c15a';
+      ctx.beginPath(); ctx.arc(px+s/2, py+s/2, s*0.22, 0, Math.PI*2); ctx.fill();
+      ctx.strokeStyle='#8b6a1e'; ctx.lineWidth=2; ctx.stroke();
+      ctx.beginPath(); ctx.arc(px+s/2, py+s/2, s*0.12, 0, Math.PI*2); ctx.stroke();
+    }
+    function monsterFace(){
+      ctx.fillStyle='#d14a4a';
+      ctx.beginPath(); ctx.arc(px+s/2, py+s/2, s*0.22, 0, Math.PI*2); ctx.fill();
+      // 眼睛
+      ctx.fillStyle='#fff'; ctx.fillRect(px+s*0.35,py+s*0.38, s*0.08, s*0.08);
+      ctx.fillRect(px+s*0.57,py+s*0.38, s*0.08, s*0.08);
+      // 牙
+      ctx.fillStyle='#ffd7d7'; ctx.fillRect(px+s*0.44,py+s*0.58, s*0.12, s*0.06);
+    }
+  }
+
+  function drawPlayer(){
+    const px = player.x*TILE, py=player.y*TILE, s=TILE;
+    // 影子
+    ctx.fillStyle='rgba(0,0,0,.35)';
+    ctx.beginPath(); ctx.ellipse(px+s/2, py+s*0.8, s*0.26, s*0.12, 0, 0, Math.PI*2); ctx.fill();
+    // 身体
+    ctx.fillStyle='#4bd3ff';
+    ctx.beginPath(); ctx.arc(px+s/2, py+s*0.48, s*0.22, 0, Math.PI*2); ctx.fill();
+    // 身体下半
+    ctx.fillStyle='#2f9cc0'; ctx.fillRect(px+s*0.3, py+s*0.55, s*0.4, s*0.22);
+    // 头盔
+    ctx.fillStyle='#e2f7ff'; ctx.beginPath(); ctx.arc(px+s/2, py+s*0.35, s*0.18, 0, Math.PI*2); ctx.fill();
+    // 眼睛
+    ctx.fillStyle='#07222c'; ctx.fillRect(px+s*0.43, py+s*0.32, s*0.05, s*0.05);
+    ctx.fillRect(px+s*0.52, py+s*0.32, s*0.05, s*0.05);
+    // 剑
+    ctx.strokeStyle='#b5c8ff'; ctx.lineWidth=3; ctx.beginPath();
+    ctx.moveTo(px+s*0.75, py+s*0.55); ctx.lineTo(px+s*0.95, py+s*0.35); ctx.stroke();
+  }
+
+  // 移动/交互
+  function tryMove(dx,dy){
+    const nx = player.x+dx, ny=player.y+dy;
+    if(nx<0||ny<0||nx>=W||ny>=H) return;
+    const v = F[player.f][ny][nx];
+
+    // 墙
+    if(v===T.WALL){ warn('前方是墙'); return }
+
+    // 门
+    if(v===T.DOOR_Y || v===T.DOOR_B || v===T.DOOR_P){
+      const need = (v===T.DOOR_Y?'Y':v===T.DOOR_B?'B':'P');
+      if(player.keys[need]>0){
+        player.keys[need]--; F[player.f][ny][nx]=T.EMPTY; ok('开门成功');
+        audio.beep(700,90,'sawtooth',.05);
+      }else{
+        warn('缺少对应钥匙');
+        return;
+      }
+    }
+
+    // 怪
+    if(v>=20 && v<=24){
+      if(fight(v)){ // 胜利，清空该格
+        F[player.f][ny][nx]=T.EMPTY; player.x=nx; player.y=ny;
+      }
+      return;
+    }
+
+    // 楼梯
+    if(v===T.UP){
+      // 上一层
+      if(player.f===0){ warn('这里没有更上一层'); return }
+      player.f--;
+      const pos = findStair(player.f, T.DOWN) || {x:1,y:1};
+      player.x=pos.x; player.y=pos.y;
+      ok(`来到第 ${player.f} 层`);
+      return;
+    }
+    if(v===T.DOWN){
+      if(player.f===F.length-1){ warn('这里已经是最底层'); return }
+      player.f++;
+      const pos = findStair(player.f, T.UP) || {x:1,y:1};
+      player.x=pos.x; player.y=pos.y;
+      ok(`来到第 ${player.f} 层`);
+      return;
+    }
+
+    // 商人：不移动，触发交互由确认键
+    if(v===T.MERCHANT){
+      log('面前是商人，点“确认”可交易。'); audio.beep(500,60,'square',.04);
+    }
+
+    // 道具/金币/钥匙
+    if([T.KEY_Y,T.KEY_B,T.KEY_P,T.POT_HP,T.POT_ATK,T.POT_DEF,T.COIN].includes(v)){
+      pickup(v);
+      F[player.f][ny][nx]=T.EMPTY;
+    }
+
+    // 移动
+    player.x=nx; player.y=ny;
+  }
+
+  function pickup(v){
+    switch(v){
+      case T.KEY_Y: player.keys.Y++; ok('获得黄钥匙'); break;
+      case T.KEY_B: player.keys.B++; ok('获得蓝钥匙'); break;
+      case T.KEY_P: player.keys.P++; ok('获得紫钥匙'); break;
+      case T.POT_HP: player.hp+=60; ok('生命药水 +60'); break;
+      case T.POT_ATK: player.atk+=5; ok('红瓶 攻击+5'); break;
+      case T.POT_DEF: player.def+=5; ok('蓝瓶 防御+5'); break;
+      case T.COIN: player.gold+=5; ok('金币 +5'); break;
+    }
+  }
+
+  // 战斗：返回是否胜利
+  function fight(t){
+    const m = MONS[t];
+    let myAtk = Math.max(0, player.atk - m.def);
+    let enAtk = Math.max(0, m.atk - player.def);
+    if(myAtk<=0){ warn(`${m.name}防御太高，无法破防！`); return false }
+
+    // 回合估算（玩家先被打一下的经典规则或双方对敲，本处采用对敲玩家先手）
+    // 我方先手：敌人需多少击倒 ceil(hp/myAtk)-1 次反击
+    const hitsToKill = Math.ceil(m.hp / myAtk);
+    const damageToMe = Math.max(0, (hitsToKill-1) * enAtk);
+
+    if(damageToMe >= player.hp){
+      warn(`与 ${m.name} 战斗会阵亡（需提升属性）`);
+      return false;
+    }
+
+    player.hp -= damageToMe;
+    player.gold += m.gold;
+    player.exp  += m.exp;
+    ok(`击败 ${m.name}，-HP ${damageToMe}，+${m.gold}金/+${m.exp}经验`);
+    tryLevelUp();
+    audio.beep(840,100,'triangle',.06);
+    return true;
+  }
+
+  // 确认键：与面前格交互（商人/门）
+  function act(){
+    const dirs = [[0,-1],[0,1],[-1,0],[1,0]];
+    for(const [dx,dy] of dirs){
+      const x=player.x+dx, y=player.y+dy;
+      const v=F[player.f][y]?.[x];
+      if(v===T.MERCHANT){ merchantDialog(); return }
+      if(v===T.DOOR_Y||v===T.DOOR_B||v===T.DOOR_P){
+        // 尝试开门
+        tryMove(dx,dy);
+        return;
+      }
+    }
+    log('附近没有可交互对象。');
+  }
+
+  // 状态栏
+  function renderStats(){
+    statsEl.innerHTML = [
+      `<span class="tag">层：${player.f}</span>`,
+      `<span class="tag">HP：${player.hp}</span>`,
+      `<span class="tag">ATK：${player.atk}</span>`,
+      `<span class="tag">DEF：${player.def}</span>`,
+      `<span class="tag">Lv：${player.level}</span>`,
+      `<span class="tag">EXP：${player.exp}</span>`,
+      `<span class="tag">Gold：${player.gold}</span>`,
+      `<span class="tag">钥匙 黄:${player.keys.Y} 蓝:${player.keys.B} 紫:${player.keys.P}</span>`,
+    ].join('');
+  }
+
+  // 日志
+  let logTimer=0;
+  function log(msg){
+    clearTimeout(logTimer);
+    logEl.textContent = msg;
+    logTimer = setTimeout(()=>{ if(logEl.textContent===msg) logEl.textContent=''; }, 6000);
+  }
+
+  // 存档/读档
+  const SAVE_KEY='mota_save_lsh_v1';
+  function save(){
+    const data = {
+      player: JSON.parse(JSON.stringify(player)),
+      floors: F.map(m => m.map(row=>row.slice()))
+    };
+    localStorage.setItem(SAVE_KEY, JSON.stringify(data));
+    ok('存档成功');
+  }
+  function load(){
+    const raw = localStorage.getItem(SAVE_KEY);
+    if(!raw){ warn('没有存档'); return }
+    try{
+      const data = JSON.parse(raw);
+      Object.assign(player, data.player);
+      for(let i=0;i<F.length;i++){
+        if(data.floors[i]) F[i] = data.floors[i].map(row=>row.slice());
+      }
+      ok('读档成功');
+    }catch(e){
+      warn('读档失败，数据已损坏');
+    }
+  }
+
+  // 输入
+  function bindButton(el, fn){
+    let pressed=false;
+    el.addEventListener('touchstart', e=>{ e.preventDefault(); if(!pressed){ pressed=true; fn(); } });
+    el.addEventListener('touchend', e=>{ pressed=false; });
+    el.addEventListener('mousedown', e=>{ e.preventDefault(); fn(); });
+  }
+  bindButton(btns.up, ()=>tryMove(0,-1));
+  bindButton(btns.down, ()=>tryMove(0,1));
+  bindButton(btns.left, ()=>tryMove(-1,0));
+  bindButton(btns.right, ()=>tryMove(1,0));
+  bindButton(btns.act, ()=>act());
+  bindButton(btns.center, ()=>log('待机中…'));
+  bindButton(btns.save, ()=>save());
+  bindButton(btns.load, ()=>load());
+  bindButton(btns.music, ()=>{
+    audio.on = !audio.on;
+    btns.music.textContent = '音乐：' + (audio.on?'开':'关');
+    if(audio.on) audio.beep(600,100,'sine',.05);
+  });
+
+  // 键盘
+  window.addEventListener('keydown', e=>{
+    const k = e.key.toLowerCase();
+    if(k==='arrowup'||k==='w') tryMove(0,-1);
+    else if(k==='arrowdown'||k==='s') tryMove(0,1);
+    else if(k==='arrowleft'||k==='a') tryMove(-1,0);
+    else if(k==='arrowright'||k==='d') tryMove(1,0);
+    else if(k===' '||k==='enter') act();
+  });
+
+  // 心跳
+  function tick(){
+    renderStats();
+    draw();
+    requestAnimationFrame(tick);
+  }
+
+  // 启动
+  (function start(){
+    // 安全兜底，防止任何异常导致黑屏
+    try{
+      tick();
+      log('目标：抵达最深层并清空守卫！');
+    }catch(err){
+      ctx.fillStyle='#0b1220'; ctx.fillRect(0,0,cvs.width,cvs.height);
+      ctx.fillStyle='#fff'; ctx.font='16px sans-serif';
+      ctx.fillText('初始化失败：'+(err&&err.message||err), 10, 20);
+      console.error(err);
+    }
+  })();
+
+})();
+</script>
+</body>
+</html>
